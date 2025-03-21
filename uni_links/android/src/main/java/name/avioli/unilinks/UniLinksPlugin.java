@@ -13,24 +13,26 @@ import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
-import io.flutter.plugin.common.PluginRegistry;
+import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
+import io.flutter.plugin.common.MethodChannel.Result;
+import io.flutter.plugin.common.EventChannel.StreamHandler;
 
 public class UniLinksPlugin
         implements FlutterPlugin,
-                MethodChannel.MethodCallHandler,
-                EventChannel.StreamHandler,
-                ActivityAware,
-                PluginRegistry.NewIntentListener {
+                MethodCallHandler,
+                StreamHandler,
+                ActivityAware {
 
     private static final String MESSAGES_CHANNEL = "uni_links/messages";
     private static final String EVENTS_CHANNEL = "uni_links/events";
 
     private BroadcastReceiver changeReceiver;
-
     private String initialLink;
     private String latestLink;
     private Context context;
     private boolean initialIntent = true;
+    private MethodChannel methodChannel;
+    private EventChannel eventChannel;
 
     private void handleIntent(Context context, Intent intent) {
         String action = intent.getAction();
@@ -51,10 +53,6 @@ public class UniLinksPlugin
         return new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
-                // NOTE: assuming intent.getAction() is Intent.ACTION_VIEW
-
-                // Log.v("uni_links", String.format("received action: %s", intent.getAction()));
-
                 String dataString = intent.getDataString();
 
                 if (dataString == null) {
@@ -69,34 +67,20 @@ public class UniLinksPlugin
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
         this.context = flutterPluginBinding.getApplicationContext();
-        register(flutterPluginBinding.getBinaryMessenger(), this);
-    }
+        methodChannel = new MethodChannel(flutterPluginBinding.getBinaryMessenger(), MESSAGES_CHANNEL);
+        methodChannel.setMethodCallHandler(this);
 
-    private static void register(BinaryMessenger messenger, UniLinksPlugin plugin) {
-        final MethodChannel methodChannel = new MethodChannel(messenger, MESSAGES_CHANNEL);
-        methodChannel.setMethodCallHandler(plugin);
-
-        final EventChannel eventChannel = new EventChannel(messenger, EVENTS_CHANNEL);
-        eventChannel.setStreamHandler(plugin);
-    }
-
-    /** Plugin registration. */
-    public static void registerWith(@NonNull PluginRegistry.Registrar registrar) {
-        // Detect if we've been launched in background
-        if (registrar.activity() == null) {
-            return;
-        }
-
-        final UniLinksPlugin instance = new UniLinksPlugin();
-        instance.context = registrar.context();
-        register(registrar.messenger(), instance);
-
-        instance.handleIntent(registrar.context(), registrar.activity().getIntent());
-        registrar.addNewIntentListener(instance);
+        eventChannel = new EventChannel(flutterPluginBinding.getBinaryMessenger(), EVENTS_CHANNEL);
+        eventChannel.setStreamHandler(this);
     }
 
     @Override
-    public void onDetachedFromEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {}
+    public void onDetachedFromEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
+        methodChannel.setMethodCallHandler(null);
+        methodChannel = null;
+        eventChannel.setStreamHandler(null);
+        eventChannel = null;
+    }
 
     @Override
     public void onListen(Object o, EventChannel.EventSink eventSink) {
@@ -109,7 +93,7 @@ public class UniLinksPlugin
     }
 
     @Override
-    public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
+    public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
         if (call.method.equals("getInitialLink")) {
             result.success(initialLink);
         } else if (call.method.equals("getLatestLink")) {
@@ -120,14 +104,8 @@ public class UniLinksPlugin
     }
 
     @Override
-    public boolean onNewIntent(Intent intent) {
-        this.handleIntent(context, intent);
-        return false;
-    }
-
-    @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding activityPluginBinding) {
-        activityPluginBinding.addOnNewIntentListener(this);
+        activityPluginBinding.addOnNewIntentListener(this::onNewIntent);
         this.handleIntent(this.context, activityPluginBinding.getActivity().getIntent());
     }
 
@@ -137,10 +115,15 @@ public class UniLinksPlugin
     @Override
     public void onReattachedToActivityForConfigChanges(
             @NonNull ActivityPluginBinding activityPluginBinding) {
-        activityPluginBinding.addOnNewIntentListener(this);
+        activityPluginBinding.addOnNewIntentListener(this::onNewIntent);
         this.handleIntent(this.context, activityPluginBinding.getActivity().getIntent());
     }
 
     @Override
     public void onDetachedFromActivity() {}
+
+    public boolean onNewIntent(Intent intent) {
+        this.handleIntent(context, intent);
+        return false;
+    }
 }
